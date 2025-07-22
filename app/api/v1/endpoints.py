@@ -80,9 +80,28 @@ def login(login_data: UserLogin, db: Session = Depends(get_db)):
 
 # Endpoint protegido: obtener todos los usuarios (requiere autenticación JWT)
 @router.get("/users", response_model=List[UserSchema])
-def read_users(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    """Devuelve la lista de todos los usuarios (requiere autenticación)."""
-    return crud_user.get_users(db)
+def read_users(
+    skip: int = 0,  # Número de usuarios a saltar (para paginación)
+    limit: int = 10,  # Número máximo de usuarios a devolver (para paginación)
+    name: str = None,  # Filtro opcional por nombre
+    email: str = None,  # Filtro opcional por email
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    """
+    Devuelve la lista de usuarios con paginación y filtros opcionales por nombre y email (requiere autenticación).
+    - skip: cuántos usuarios saltar (por defecto 0)
+    - limit: cuántos usuarios devolver (por defecto 10)
+    - name: filtra usuarios por nombre (opcional)
+    - email: filtra usuarios por email (opcional)
+    """
+    query = db.query(crud_user.UserDB)
+    if name:
+        query = query.filter(crud_user.UserDB.name.ilike(f"%{name}%"))
+    if email:
+        query = query.filter(crud_user.UserDB.email.ilike(f"%{email}%"))
+    users = query.offset(skip).limit(limit).all()
+    return users
 
 # Endpoint protegido: obtener un usuario por su ID (requiere autenticación JWT)
 @router.get("/users/{user_id}", response_model=UserSchema)

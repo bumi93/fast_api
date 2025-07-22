@@ -46,3 +46,15 @@ def login_user(db: Session, login_data: UserLogin) -> Optional[UserDB]:
         if not login_data.totp_code or not verify_totp_code(db_user.totp_secret, login_data.totp_code):
             return None  # Si el código TOTP no es válido, retorna None
     return db_user  # Si todo es correcto, retorna el usuario
+
+def delete_user(db: Session, user_id: int) -> bool:
+    """
+    Elimina un usuario de la base de datos por su ID.
+    Retorna True si se eliminó, False si no existe.
+    """
+    db_user = get_user(db, user_id)
+    if db_user is None:
+        return False  # No existe el usuario
+    db.delete(db_user)
+    db.commit()
+    return True

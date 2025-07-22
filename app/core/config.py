@@ -1,7 +1,13 @@
 # app/core/config.py
 # Configuración principal de la aplicación usando Pydantic
 
-from pydantic import BaseSettings
+import os
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+from pydantic_settings import BaseSettings
 
 # Clase de configuración que puede leer variables de entorno
 class Settings(BaseSettings):

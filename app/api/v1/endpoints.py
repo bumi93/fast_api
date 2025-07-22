@@ -11,6 +11,18 @@ from app.utils.auth import create_access_token, decode_access_token
 from app.utils.totp import generate_totp_qr
 import base64
 from fastapi.security import HTTPBearer
+from app.schemas.scraping import AribaLoginRequest
+from app.scraping.ariba_scraper import login_ariba, AribaCredentials
+from fastapi import HTTPException
+import asyncio
+import logging
+
+# Configurar logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Esquema de seguridad para JWT (HTTP Bearer)
 bearer_scheme = HTTPBearer()
@@ -89,6 +101,129 @@ def login(login_data: UserLogin, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Credenciales o código 2FA incorrectos")
     token = create_access_token({"sub": user.email})
     return {"access_token": token, "token_type": "bearer"}
+
+
+# Variable global para la tarea de refresco
+refresh_task = None
+
+# Diccionario global para drivers activos y variable de uso
+active_drivers = {}
+driver_in_use = False
+
+logger = logging.getLogger(__name__)
+
+async def refresh_driver_periodically(driver_name: str, interval: int):
+    """
+    Tarea asíncrona para navegar a URLs específicas periódicamente
+    Solo se ejecuta si el driver no está siendo usado activamente
+    """
+    global driver_in_use
+    logger.info(f"Iniciando tarea de navegación para {driver_name} con intervalo de {interval} segundos")
+    while True:
+        try:
+            logger.info(f"Esperando {interval} segundos antes de la próxima navegación para {driver_name}")
+            await asyncio.sleep(interval)
+            # Verificar si el driver está activo
+            if driver_name not in active_drivers:
+                logger.warning(f"No hay driver activo para {driver_name}, saltando navegación")
+                continue
+            # Verificar si el driver está siendo usado
+            if driver_in_use:
+                logger.info(f"Driver {driver_name} está siendo usado, saltando navegación")
+                continue
+            logger.info(f"Iniciando navegación para {driver_name}")
+            driver = active_drivers[driver_name]
+            # Navegar a la primera URL
+            logger.info(f"Navegando a primera URL para {driver_name}")
+            driver.get('https://s1.ariba.com/Sourcing/Main')
+            await asyncio.sleep(2)
+            # Navegar a la segunda URL
+            logger.info(f"Navegando a segunda URL para {driver_name}")
+            driver.get('https://s1.ariba.com/Sourcing/Main/aw?awh=r&awssk=XT7J.wXPZ1._CF9T&realm=latam&awrdt=1')
+            await asyncio.sleep(2)
+            logger.info(f"Navegación completada exitosamente para {driver_name}")
+        except Exception as e:
+            logger.error(f"Error en la tarea de navegación para {driver_name}: {str(e)}")
+            logger.info("Esperando 60 segundos antes de reintentar...")
+            await asyncio.sleep(60)
+
+# Endpoint para login con Selenium y refresco automático
+@router.post("/login-ariba-driver")
+async def login_ariba_driver():
+    """
+    Inicia sesión en Ariba usando las credenciales del driver principal y lanza la tarea de refresco.
+    """
+    global refresh_task
+    logger.info("[login-ariba-driver] Iniciando endpoint")
+    creds = AribaCredentials.get_credentials("driver")
+    logger.info(f"[login-ariba-driver] Credenciales obtenidas: {creds}")
+    if not creds:
+        logger.error("[login-ariba-driver] Credenciales no encontradas para 'driver'")
+        raise HTTPException(status_code=404, detail="Credenciales no encontradas para 'driver'")
+    driver, success, message = login_ariba(
+        email=creds["email"],
+        password=creds["password"],
+        headless=False
+    )
+    logger.info(f"[login-ariba-driver] Resultado login: success={success}, message={message}")
+    if success:
+        active_drivers["driver"] = driver  # Guarda el driver activo
+        logger.info("[login-ariba-driver] Driver guardado en active_drivers['driver']")
+        # Lanza la tarea de refresco solo si no existe o está terminada
+        if refresh_task is None or refresh_task.done():
+            logger.info("[login-ariba-driver] Lanzando tarea de refresco para 'driver'")
+            refresh_task = asyncio.create_task(refresh_driver_periodically("driver", 90))
+        else:
+            logger.info("[login-ariba-driver] Tarea de refresco ya activa")
+        return {"status": "success", "message": message}
+    else:
+        logger.error(f"[login-ariba-driver] Error en login: {message}")
+        raise HTTPException(status_code=500, detail=message)
+
+@router.post("/login-ariba-driver_m")
+async def login_ariba_driver_m():
+    """
+    Inicia sesión en Ariba usando las credenciales del driver_m y lanza la tarea de refresco.
+    """
+    global refresh_task
+    creds = AribaCredentials.get_credentials("driver_m")
+    if not creds:
+        raise HTTPException(status_code=404, detail="Credenciales no encontradas para 'driver_m'")
+    driver, success, message = login_ariba(
+        email=creds["email"],
+        password=creds["password"],
+        headless=False
+    )
+    if success:
+        active_drivers["driver_m"] = driver  # Guarda el driver activo
+        if refresh_task is None or refresh_task.done():
+            refresh_task = asyncio.create_task(refresh_driver_periodically("driver_m", 90))
+        return {"status": "success", "message": message}
+    else:
+        raise HTTPException(status_code=500, detail=message)
+
+# Endpoint para cerrar el driver y cancelar la tarea de refresco
+@router.post("/close-driver/{driver_name}")
+async def close_driver(driver_name: str):
+    """
+    Cierra el driver especificado y cancela la tarea de refresco si está activa.
+    """
+    global refresh_task
+    if driver_name in active_drivers:
+        try:
+            active_drivers[driver_name].quit()
+            del active_drivers[driver_name]
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error al cerrar el driver: {str(e)}")
+    # Cancela la tarea de refresco si está activa
+    if refresh_task and not refresh_task.done():
+        refresh_task.cancel()
+        try:
+            await refresh_task
+        except asyncio.CancelledError:
+            pass
+        refresh_task = None
+    return {"status": "success", "message": f"Driver {driver_name} cerrado y refresco detenido"}
 
 # --- CRUD de usuarios (protegido) ---
 

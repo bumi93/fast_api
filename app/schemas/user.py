@@ -15,6 +15,7 @@ class UserSchema(BaseModel):
     id: int  # Identificador único del usuario
     name: str  # Nombre del usuario
     email: str  # Correo electrónico del usuario
+    role: str  # Rol del usuario (user, admin, etc.)
 
 # Esquema para crear un usuario (lo que se recibe del cliente al crear)
 # No incluye el id porque ese lo genera la base de datos automáticamente
@@ -22,6 +23,7 @@ class UserCreate(BaseModel):
     name: str  # Nombre del usuario
     email: str  # Correo electrónico del usuario
     password: str  # Contraseña del usuario
+    # El rol no se envía al registrar, siempre será 'user' por defecto
 
 # Esquema para login de usuario
 class UserLogin(BaseModel):
@@ -38,4 +40,4 @@ class Activate2FAResponse(BaseModel):
 class UserUpdate(BaseModel):
     name: Optional[str] = None  # Nombre puede ser opcional
     email: Optional[str] = None  # Email puede ser opcional
-    # Puedes agregar más campos opcionales si lo deseas 
+    role: Optional[str] = None  # Rol puede ser opcional (solo admin puede cambiarlo) 

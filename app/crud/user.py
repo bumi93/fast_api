@@ -20,7 +20,12 @@ def get_user_by_email(db: Session, email: str) -> Optional[UserDB]:
 
 def register_user(db: Session, user: UserCreate) -> UserDB:
     hashed_password = get_password_hash(user.password)  # Hashea la contraseña del usuario
-    db_user = UserDB(name=user.name, email=user.email, password=hashed_password)  # Crea una instancia del usuario con la contraseña hasheada
+    db_user = UserDB(
+        name=user.name,
+        email=user.email,
+        password=hashed_password,
+        role="user"  # Siempre asigna 'user' al registrar
+    )
     db.add(db_user)  # Agrega el usuario a la sesión de la base de datos
     db.commit()  # Guarda los cambios en la base de datos
     db.refresh(db_user)  # Refresca la instancia para obtener el id generado

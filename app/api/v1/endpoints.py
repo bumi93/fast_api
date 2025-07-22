@@ -43,6 +43,16 @@ def get_current_user(token: str = Security(bearer_scheme), db: Session = Depends
         raise HTTPException(status_code=401, detail="Usuario no encontrado")
     return user
 
+# Dependencia para requerir un rol específico
+from fastapi import Depends, HTTPException
+
+def require_role(required_role: str):
+    def role_checker(current_user=Depends(get_current_user)):
+        if current_user.role != required_role:
+            raise HTTPException(status_code=403, detail="No tienes permisos suficientes")
+        return current_user
+    return role_checker
+
 # Endpoint raíz que responde con un mensaje de bienvenida
 @router.get("/")
 def read_root():
@@ -53,9 +63,13 @@ def read_root():
 # Endpoint para registrar un nuevo usuario
 @router.post("/register", response_model=UserSchema)
 def register(user: UserCreate, db: Session = Depends(get_db)):
-    if crud_user.get_user_by_email(db, user.email):
-        raise HTTPException(status_code=400, detail="El email ya está registrado")
-    return crud_user.register_user(db, user)
+    try:
+        if crud_user.get_user_by_email(db, user.email):
+            raise HTTPException(status_code=400, detail="El email ya está registrado")
+        return crud_user.register_user(db, user)
+    except Exception as e:
+        print("ERROR EN REGISTRO:", e)
+        raise
 
 # Endpoint para activar 2FA y devolver el QR en base64
 @router.post("/users/{user_id}/2fa/activate", response_model=Activate2FAResponse)
@@ -123,6 +137,7 @@ def update_user(
     """
     Actualiza los datos de un usuario existente (requiere autenticación).
     Ahora puedes enviar solo el campo que quieras actualizar.
+    Solo un admin puede cambiar el rol de un usuario.
     """
     db_user = crud_user.get_user(db, user_id)
     if db_user is None:
@@ -132,14 +147,24 @@ def update_user(
         db_user.name = user.name
     if user.email is not None:
         db_user.email = user.email
+    if user.role is not None:
+        if current_user.role != "admin":
+            raise HTTPException(status_code=403, detail="Solo un admin puede cambiar el rol de un usuario")
+        db_user.role = user.role
     db.commit()
     db.refresh(db_user)
     return db_user
 
-# Endpoint protegido: borrar un usuario (requiere autenticación JWT)
+# Endpoint protegido: borrar un usuario (requiere autenticación JWT y rol admin)
 @router.delete("/users/{user_id}")
-def delete_user(user_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    """Elimina un usuario de la base de datos (requiere autenticación)."""
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin"))  # Solo admin puede borrar usuarios
+):
+    """
+    Elimina un usuario de la base de datos (requiere autenticación y rol admin).
+    """
     success = crud_user.delete_user(db, user_id)
     if not success:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")

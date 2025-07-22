@@ -20,6 +20,7 @@ class UserDB(Base):
     email = Column(String, unique=True, index=True)  # Correo electrónico, debe ser único
     password = Column(String)  # Contraseña hasheada del usuario
     totp_secret = Column(String, nullable=True)  # Secreto TOTP para 2FA (puede ser nulo si no está activado)
+    role = Column(String, default="user")  # Rol del usuario (user, admin, etc.)
 
 # Modelo de usuario para validación y respuesta (Pydantic)
 # Esta clase se usa para validar los datos que entran y salen de la API.

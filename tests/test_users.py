@@ -14,22 +14,22 @@ def test_register_and_login():
         "name": "Test User",
         "email": "testuser@email.com",
         "password": "testpassword"
-    })
-    assert response.status_code == 200
+    })  # Envía una solicitud POST para registrar un nuevo usuario
+    assert response.status_code == 200  # Verifica que el registro fue exitoso
     data = response.json()
-    assert data["email"] == "testuser@email.com"
+    assert data["email"] == "testuser@email.com"  # Confirma que el email registrado es correcto
 
     # 2. Login (sin 2FA activado)
     response = client.post("/login", json={
         "email": "testuser@email.com",
         "password": "testpassword"
-    })
-    assert response.status_code == 200
+    })  # Realiza login con el usuario registrado
+    assert response.status_code == 200  # Verifica que el login fue exitoso
     token = response.json()["access_token"]
-    assert token
+    assert token  # Asegura que se recibió un token de acceso
 
     # 3. Acceder a endpoint protegido
     headers = {"Authorization": f"Bearer {token}"}
-    response = client.get("/users", headers=headers)
-    assert response.status_code == 200
-    assert isinstance(response.json(), list) 
+    response = client.get("/users", headers=headers)  # Intenta acceder a un endpoint protegido usando el token
+    assert response.status_code == 200  # Verifica que el acceso fue permitido
+    assert isinstance(response.json(), list)  # Confirma que la respuesta es una lista de usuarios

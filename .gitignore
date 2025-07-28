@@ -64,5 +64,8 @@ coverage.xml
 *.db
 data/
 
+# Downloaded files from Ariba
+downloads/*
+
 # VSCode
 .vscode/ 

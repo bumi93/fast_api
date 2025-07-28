@@ -110,7 +110,6 @@ def login_ariba(email: str, password: str, headless: bool = False, download_path
             driver.quit()
         return None, False, f"Error: {str(e)}"
 
-
 def scrape_page(url, selectors, wait_time=10, headless=True):
     """
     Realiza scraping de una página usando Selenium y selectores CSS.
@@ -147,4 +146,145 @@ class AribaCredentials:
 
     @classmethod
     def get_credentials(cls, driver_name: str) -> Optional[dict]:
-        return cls.CREDENTIALS.get(driver_name) 
+        return cls.CREDENTIALS.get(driver_name)
+
+def descarga_db(driver, path):
+    """
+    Descarga archivos CSV desde Ariba usando el driver proporcionado
+    Solo descarga archivos que no existen o que no son de hoy
+    
+    Args:
+        driver: Instancia de WebDriver activa y logueada en Ariba
+        path: Ruta base donde se guardarán los archivos
+        
+    Returns:
+        Tuple con (success, message)
+    """
+    try:
+        from datetime import datetime, date
+        
+        folder_path = path
+        today = date.today()
+        archivos_descargados = 0
+        archivos_omitidos = 0
+
+        # Crear la carpeta si no existe
+        os.makedirs(folder_path, exist_ok=True)
+        
+        # Función para verificar si un archivo es de hoy
+        def archivo_es_de_hoy(file_path):
+            if not os.path.exists(file_path):
+                return False
+            try:
+                # Obtener la fecha de modificación del archivo
+                timestamp = os.path.getmtime(file_path)
+                file_date = datetime.fromtimestamp(timestamp).date()
+                return file_date == today
+            except Exception:
+                return False
+        
+        #-------------------------------------------------------------------------------------
+        lista_csv = ["PR's", "CATALOG", "LEGAL", "IVA", "Categoría PR", "Categoria PR Lega" ,"Fecha_reque", "Pedidos Lata", "Sourcing DB", "DB Gerencia Compras", "Materiales", "PXC", "AQN_OTIF", "Reporte Proveedores v2", "especiales 2024 - Francisco", "SAP_MAT_SER", "Moneda y Pedido"]
+
+        # lista_csv = ["especiales 2024 - Francisco"]
+
+         #Antes era 12
+        
+        lista_rutas = ["Backlog COMPRAS - LATAM - PR's.csv","Backlog COMPRAS - LATAM - CATALOG.csv", "Backlog BPO PROCESO LEGAL.csv", "BACKPG PR - IVA.csv", "Categoría PR Compras.csv" , "Categoria PR Legal.csv", "Fecha_requerida.csv", "Pedidos Latam.csv", "Sourcing DB.csv", "DB Gerencia Compras.csv" , "Materiales LATAM.csv", "OTIF - Material - PXC.csv", "AQN_OTIF_OT.csv", "Reporte Proveedores v2.csv", "PR especiales 2024 - Francisco.csv", "SAP_MAT_SER.csv", "Moneda y Pedidos.csv"]
+
+        # lista_rutas = ["PR especiales 2024 - Francisco.csv"]
+ 
+        i = 0
+        
+        for nombre in lista_csv:
+            path_archivos = folder_path + "\\" + lista_rutas[i]
+            
+            # Verificar si el archivo ya existe y es de hoy
+            if archivo_es_de_hoy(path_archivos):
+                print(f'--> Archivo {nombre} ya existe y es de hoy. Omitiendo descarga.')
+                archivos_omitidos += 1
+                i += 1
+                continue
+            
+            print('--> Se descargará el archivo: ', path_archivos)
+            archivos_descargados += 1
+
+            time.sleep(10)
+
+            validador = True
+            
+            while validador:
+            #Ingresar a área Personal
+                try:
+                    wait = WebDriverWait(driver, 10)
+                    try:
+                        gestionar = wait.until(EC.presence_of_element_located((By.XPATH, "/html/body/div[5]/table/tbody/tr/td/table/tbody/tr[1]/td/table/tbody/tr[4]/td/table/tbody/tr/td[3]/div/table/tbody/tr/td[2]/a")))
+                    except:
+                        try:
+                            gestionar = wait.until(EC.presence_of_element_located((By.XPATH, "//*[@id='_s2d3v']")))
+                        except:
+                            gestionar = wait.until(EC.presence_of_element_located((By.PARTIAL_LINK_TEXT, "Gestionar")))
+                            
+                    gestionar.click()
+                    time.sleep(3)
+                    areaperso = wait.until(EC.presence_of_element_located((By.PARTIAL_LINK_TEXT, 'de trabajo personal')))
+                    areaperso.click()
+
+                    time.sleep(5)
+
+                    #Descargar archivo
+                    backlog = wait.until(EC.presence_of_element_located((By.PARTIAL_LINK_TEXT, nombre)))
+                    backlog.click()
+                    time.sleep(3)
+                    link_archivo = wait.until(EC.presence_of_element_located((By.XPATH, "/html/body/div[5]/form/div[4]/div/div[3]/a[2]")))
+                    link_archivo.click()
+
+                    while not os.path.isfile(path_archivos):
+                        time.sleep(1)
+
+                    time.sleep(2)
+                        
+                    try:
+                        wait = WebDriverWait(driver, 5)
+                        volver = wait.until(EC.presence_of_element_located((By.XPATH, "/html/body/div[5]/table/tbody/tr/td/table/tbody/tr[1]/td/table/tbody/tr[1]/td/div/div[1]/div[1]/a")))
+                        volver.click()
+                    except:
+                        volver = wait.until(EC.presence_of_element_located((By.XPATH, "/html/body/div[5]/form/table/tbody/tr/td/table/tbody/tr[2]/td/table/tbody/tr/td[2]/div/div/div/div/div/div[1]/table/tbody/tr/td[3]/table/tbody/tr/td/table/tbody/tr/td/button")))
+                        volver.click()
+
+                        time.sleep(1)
+
+                        inicio = wait.until(EC.presence_of_element_located((By.XPATH, "/html/body/div[5]/form/table/tbody/tr/td/table/tbody/tr[1]/td/table/tbody/tr[1]/td/div/div[1]/div[1]/a")))
+                        inicio.click()
+                        #-------------------------------------
+                    if os.path.exists(path_archivos):
+                        print("--> Descarga archivo " + nombre + " LATAM correcto.")
+                        validador = False
+                        i += 1
+                    else:
+                        print("--> El archivo no existe.")
+                       
+            #Validados que este descargado
+                except:
+                    time.sleep(3)
+                    try:
+                        boton_completado = wait.until(EC.presence_of_element_located((By.XPATH, "/html/body/div[5]/form/table/tbody/tr/td/table/tbody/tr[2]/td/table/tbody/tr/td[2]/div/div/div/div/div/div[5]/table/tbody/tr/td[2]/table/tbody/tr/td/table/tbody/tr/td/button")))
+                        validador = boton_completado.get_attribute("innerText")
+
+                        if validador == "Completado":
+                            boton_completado.click()
+                        else:
+                            pass
+                    except:
+                        pass
+
+                    time.sleep(1)
+                    wait.until(EC.presence_of_element_located((By.XPATH, "/html/body/div[5]/form/table/tbody/tr/td/table/tbody/tr[1]/td/table/tbody/tr[1]/td/div/div[1]/div[2]/div/a"))).click()
+                    time.sleep(1)
+
+        # Mensaje final con estadísticas
+        mensaje = f"--> Proceso completado. Archivos descargados: {archivos_descargados}, Archivos omitidos (ya existían de hoy): {archivos_omitidos}"
+        return True, mensaje
+        
+    except Exception as e:
+        return False, f"Error en descarga_db: {str(e)}" 

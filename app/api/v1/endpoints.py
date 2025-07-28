@@ -12,10 +12,12 @@ from app.utils.totp import generate_totp_qr
 import base64
 from fastapi.security import HTTPBearer
 from app.schemas.scraping import AribaLoginRequest
-from app.scraping.ariba_scraper import login_ariba, AribaCredentials
+from app.scraping.ariba_scraper import login_ariba, AribaCredentials, descarga_db
+from app.data_management import FileProcessor, DataValidator, DataTransformer
 from fastapi import HTTPException
 import asyncio
 import logging
+import os
 
 # Configurar logging
 logging.basicConfig(
@@ -110,7 +112,19 @@ refresh_task = None
 active_drivers = {}
 driver_in_use = False
 
+# Este bloque crea un "ThreadPoolExecutor", que es una herramienta de Python para ejecutar tareas en paralelo usando hilos (threads).
+# En este caso, se usa para ejecutar tareas relacionadas con Selenium (como automatizar el navegador) sin bloquear el hilo principal de la aplicación.
+# El parámetro "max_workers=2" significa que como máximo se ejecutarán 2 tareas al mismo tiempo en segundo plano.
+from concurrent.futures import ThreadPoolExecutor
+executor = ThreadPoolExecutor(max_workers=1)
+
 logger = logging.getLogger(__name__)
+
+def set_driver_in_use(in_use: bool):
+    """Establece el estado de uso del driver"""
+    global driver_in_use
+    driver_in_use = in_use
+    logger.info(f"Driver usage state set to: {in_use}")
 
 async def refresh_driver_periodically(driver_name: str, interval: int):
     """
@@ -156,7 +170,6 @@ async def login_ariba_driver():
     global refresh_task
     logger.info("[login-ariba-driver] Iniciando endpoint")
     creds = AribaCredentials.get_credentials("driver")
-    logger.info(f"[login-ariba-driver] Credenciales obtenidas: {creds}")
     if not creds:
         logger.error("[login-ariba-driver] Credenciales no encontradas para 'driver'")
         raise HTTPException(status_code=404, detail="Credenciales no encontradas para 'driver'")
@@ -224,6 +237,266 @@ async def close_driver(driver_name: str):
             pass
         refresh_task = None
     return {"status": "success", "message": f"Driver {driver_name} cerrado y refresco detenido"}
+
+# Endpoint para descargar archivos CSV desde Ariba
+# Este endpoint de FastAPI permite descargar archivos CSV desde Ariba usando un driver de Selenium que ya debe estar autenticado y activo.
+@router.post("/descargar-archivos-ariba")
+async def descargar_archivos_ariba(path: str = None):
+    """
+    Descarga archivos CSV desde Ariba usando el driver principal (driver)
+    
+    Args:
+        path: Ruta opcional donde guardar los archivos (por defecto usa DOWNLOAD_DIR)
+        
+    Returns:
+        dict: Estado de la descarga y mensaje
+    """
+    try:
+        driver_name = "driver"  # Siempre se usa el driver principal llamado "driver"
+        
+        # 1. Verifica que el driver esté activo. Si no, lanza un error.
+        if driver_name not in active_drivers:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No hay un driver activo. Primero debes iniciar sesión con /login-ariba-driver"
+            )
+        
+        driver = active_drivers[driver_name]
+        logger.info(f"Iniciando descarga de archivos con driver {driver_name}")
+        
+        # 2. Si no se especifica una ruta, usa la ruta por defecto de configuración.
+        if path is None:
+            from app.core.config import DOWNLOAD_DIR
+            path = DOWNLOAD_DIR
+        
+        # 3. Marca el driver como "en uso" para evitar conflictos con otras operaciones.
+        set_driver_in_use(True)
+        logger.info(f"Driver {driver_name} marcado como en uso - iniciando descarga")
+        
+        try:
+            # 4. Ejecuta la función de descarga (descarga_db) de forma asíncrona en un thread pool.
+            #    Esto permite que la API no se bloquee mientras Selenium descarga los archivos.
+            loop = asyncio.get_event_loop()
+            success, message = await loop.run_in_executor(
+                executor,
+                lambda: descarga_db(driver, path)
+            )
+            
+            # 5. Si la descarga fue exitosa, retorna un diccionario con el estado y detalles.
+            if success:
+                return {
+                    "status": "success",
+                    "message": message,
+                    "driver_used": driver_name,
+                    "download_path": path
+                }
+            else:
+                # Si hubo un error en la descarga, lanza un error HTTP 500.
+                raise HTTPException(status_code=500, detail=message)
+                
+        finally:
+            # 6. Al terminar (éxito o error), marca el driver como "libre".
+            set_driver_in_use(False)
+            logger.info(f"Driver {driver_name} marcado como libre - descarga completada")
+            
+    except HTTPException:
+        # Si ya se lanzó un HTTPException, simplemente la relanza.
+        raise
+    except Exception as e:
+        # Si ocurre cualquier otro error, lo registra y lanza un error HTTP 500.
+        logger.error(f"Error en descarga de archivos: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error en descarga de archivos: {str(e)}")
+
+# --- Endpoints de Manejo de Datos ---
+# Estos endpoints permiten procesar, validar y transformar archivos CSV descargados de Ariba
+
+@router.get("/data/files")
+async def get_available_files():
+    """
+    Obtiene la lista de archivos CSV disponibles en la carpeta de descargas
+    
+    Este endpoint:
+    1. Busca todos los archivos CSV en la carpeta de descargas
+    2. Retorna una lista con los nombres de archivos encontrados
+    3. Incluye el conteo total de archivos
+    
+    Returns:
+        dict: Diccionario con status, files_count y lista de archivos
+        
+    Ejemplo de respuesta:
+        {
+            "status": "success",
+            "files_count": 3,
+            "files": ["archivo1.csv", "archivo2.csv", "archivo3.csv"]
+        }
+    """
+    try:
+        from app.core.config import DOWNLOAD_DIR
+        file_processor = FileProcessor(DOWNLOAD_DIR)
+        files = file_processor.get_available_files()
+        
+        return {
+            "status": "success",
+            "files_count": len(files),
+            "files": files
+        }
+    except Exception as e:
+        logger.error(f"Error al obtener archivos: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error al obtener archivos: {str(e)}")
+
+@router.get("/data/files/{filename}/info")
+async def get_file_info(filename: str):
+    """
+    Obtiene información detallada de un archivo específico
+    
+    Este endpoint:
+    1. Carga el archivo CSV especificado
+    2. Analiza su estructura (filas, columnas, tipos de datos)
+    3. Obtiene metadatos (tamaño, fecha de modificación)
+    4. Retorna información detallada del archivo
+    
+    Args:
+        filename: Nombre del archivo CSV (ejemplo: "Backlog COMPRAS - LATAM - PR's.csv")
+    
+    Returns:
+        dict: Diccionario con status y información detallada del archivo
+        
+    Ejemplo de respuesta:
+        {
+            "status": "success",
+            "file_info": {
+                "filename": "archivo.csv",
+                "file_size_mb": 2.5,
+                "rows": 1000,
+                "columns": 15,
+                "column_names": ["col1", "col2", ...]
+            }
+        }
+    """
+    try:
+        from app.core.config import DOWNLOAD_DIR
+        file_processor = FileProcessor(DOWNLOAD_DIR)
+        file_info = file_processor.get_file_info(filename)
+        
+        return {
+            "status": "success",
+            "file_info": file_info
+        }
+    except Exception as e:
+        logger.error(f"Error al obtener información del archivo {filename}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error al obtener información del archivo: {str(e)}")
+
+@router.post("/data/validate")
+async def validate_files(filenames: List[str] = None):
+    """
+    Valida múltiples archivos CSV
+    
+    Este endpoint:
+    1. Carga los archivos CSV especificados (o todos si no se especifican)
+    2. Aplica validaciones de calidad de datos
+    3. Verifica estructura y completitud
+    4. Genera un reporte de validación con estadísticas
+    
+    Args:
+        filenames: Lista opcional de nombres de archivos a validar
+                  Si no se especifica, valida todos los archivos disponibles
+    
+    Returns:
+        dict: Diccionario con status, resumen de validación y resultados detallados
+        
+    Ejemplo de respuesta:
+        {
+            "status": "success",
+            "validation_summary": {
+                "total_files": 3,
+                "files_with_errors": 0,
+                "files_with_warnings": 1,
+                "average_completeness": 95.5
+            },
+            "validation_results": {...}
+        }
+    """
+    try:
+        from app.core.config import DOWNLOAD_DIR
+        file_processor = FileProcessor(DOWNLOAD_DIR)
+        validator = DataValidator()
+        
+        if filenames is None:
+            filenames = file_processor.get_available_files()
+        
+        validation_results = validator.validate_multiple_files(file_processor, filenames)
+        summary = validator.get_validation_summary(validation_results)
+        
+        return {
+            "status": "success",
+            "validation_summary": summary,
+            "validation_results": validation_results
+        }
+    except Exception as e:
+        logger.error(f"Error en validación de archivos: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error en validación: {str(e)}")
+
+@router.post("/data/transform")
+async def transform_files(filenames: List[str] = None, save_clean: bool = False):
+    """
+    Transforma y limpia múltiples archivos CSV
+    
+    Este endpoint:
+    1. Carga los archivos CSV especificados (o todos si no se especifican)
+    2. Aplica limpiezas y transformaciones estándar
+    3. Elimina duplicados y maneja valores faltantes
+    4. Normaliza nombres de columnas y formatos
+    5. Opcionalmente guarda los archivos limpios
+    
+    Args:
+        filenames: Lista opcional de nombres de archivos a transformar
+                  Si no se especifica, transforma todos los archivos disponibles
+        save_clean: Si es True, guarda los archivos limpios en una carpeta "clean_data"
+    
+    Returns:
+        dict: Diccionario con status, resumen de transformación y archivos guardados
+        
+    Ejemplo de respuesta:
+        {
+            "status": "success",
+            "transformation_summary": {
+                "total_transformations": 5,
+                "transformations_applied": ["Removed duplicates", "Cleaned column names", ...]
+            },
+            "files_transformed": 3,
+            "saved_files": {...}
+        }
+    """
+    try:
+        from app.core.config import DOWNLOAD_DIR
+        file_processor = FileProcessor(DOWNLOAD_DIR)
+        transformer = DataTransformer()
+        
+        if filenames is None:
+            filenames = file_processor.get_available_files()
+        
+        transformed_data = transformer.transform_multiple_files(file_processor, filenames)
+        transformation_summary = transformer.get_transformation_summary()
+        
+        result = {
+            "status": "success",
+            "transformation_summary": transformation_summary,
+            "files_transformed": len(transformed_data)
+        }
+        
+        if save_clean:
+            # Crear carpeta para archivos limpios
+            clean_folder = os.path.join(DOWNLOAD_DIR, "clean_data")
+            os.makedirs(clean_folder, exist_ok=True)
+            
+            saved_files = transformer.save_transformed_data(transformed_data, clean_folder)
+            result["saved_files"] = saved_files
+            result["clean_folder"] = clean_folder
+        
+        return result
+    except Exception as e:
+        logger.error(f"Error en transformación de archivos: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error en transformación: {str(e)}")
 
 # --- CRUD de usuarios (protegido) ---
 

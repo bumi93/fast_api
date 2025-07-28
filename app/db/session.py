@@ -22,4 +22,16 @@ engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # metadata guarda información sobre las tablas y estructuras de la base de datos.
-metadata = MetaData() 
+metadata = MetaData()
+
+# Función para obtener una sesión de base de datos
+def get_db():
+    """
+    Dependencia para obtener una sesión de base de datos por cada petición.
+    Así cada request tiene su propia conexión y se cierra al terminar.
+    """
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close() 

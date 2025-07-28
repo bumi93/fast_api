@@ -2,7 +2,7 @@
 # Funciones CRUD para el modelo de usuario usando SQLAlchemy
 
 from sqlalchemy.orm import Session
-from app.models.user import UserDB
+from app.db.models import UserDB
 from app.schemas.user import UserCreate, UserLogin
 from typing import List, Optional
 from app.utils.auth import get_password_hash, verify_password

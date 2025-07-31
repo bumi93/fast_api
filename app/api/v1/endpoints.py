@@ -1,7 +1,7 @@
 # app/api/v1/endpoints.py
 # Definición de rutas (endpoints) para la API versión 1
 
-from fastapi import APIRouter, Depends, HTTPException, status, Response, Security
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Security, Request
 from sqlalchemy.orm import Session
 from typing import List
 from app.schemas.user import UserSchema, UserCreate, UserLogin, Activate2FAResponse, UserUpdate
@@ -14,7 +14,10 @@ from fastapi.security import HTTPBearer
 from app.schemas.scraping import AribaLoginRequest
 from app.scraping.ariba_scraper import login_ariba, AribaCredentials, descarga_db
 from app.data_management import FileProcessor, DataValidator, DataTransformer
+from app.api.v1.upload_endpoints import router as upload_router
 from fastapi import HTTPException
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 import asyncio
 import logging
 import os
@@ -25,6 +28,9 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Configurar templates
+templates = Jinja2Templates(directory="app/templates")
 
 # Esquema de seguridad para JWT (HTTP Bearer)
 bearer_scheme = HTTPBearer()
@@ -71,6 +77,9 @@ def require_role(required_role: str):
 @router.get("/")
 def read_root():
     return {"message": "¡Hola desde FastAPI!"}
+
+# Incluir el router de upload
+router.include_router(upload_router)
 
 # --- Autenticación y 2FA ---
 

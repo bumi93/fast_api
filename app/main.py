@@ -5,6 +5,7 @@ import logging
 import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from app.api.v1 import endpoints
 
 logger = logging.getLogger(__name__)
@@ -46,4 +47,12 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-app.include_router(endpoints.router) 
+# Montar archivos estáticos
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+
+# Incluir el router principal con prefijo /api/v1
+app.include_router(endpoints.router, prefix="/api/v1")
+
+# Incluir el endpoint de upload directamente (sin prefijo)
+from app.api.v1.upload_endpoints import router as upload_router
+app.include_router(upload_router) 

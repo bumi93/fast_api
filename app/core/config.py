@@ -13,6 +13,12 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     app_name: str = "Bots-Latam v2"  # Nombre de la aplicación
     debug: bool = True  # Modo debug
+    
+    # Configuración de base de datos
+    DATABASE_URL: str = "sqlite:///./test.db"  # Base de datos SQLite por defecto
+    
+    class Config:
+        env_file = ".env"
 
 # Instancia global de configuración
 settings = Settings() 

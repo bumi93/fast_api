@@ -5,4 +5,8 @@ databases
 python-jose[cryptography]
 passlib[bcrypt]
 pyotp
-qrcode[pil] 
+qrcode[pil]
+pandas
+openpyxl
+xlrd
+python-multipart 
